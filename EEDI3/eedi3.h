@@ -64,7 +64,7 @@ private:
 	// - backtrack index: 4 * w * (mdis*2*pel+1) int32
 	// - final path     : 4 * w                  int32
 	// - mask           :     w                  bool
-	uint8_t **workspace;
+	//uint8_t **workspace;
 	PlanarFrame *srcPF, *dstPF, *scpPF;
 	PlanarFrame *mcpPF;	// Fields from the mask clip
 	PClip sclip;
@@ -73,11 +73,11 @@ private:
 	void copyMask(int n, int fn, IScriptEnvironment *env);
 
 public:
-	eedi3::eedi3(PClip _child, int _field, bool _dh, bool _Y, bool _U, bool _V, 
-		float _alpha, float _beta, float _gamma, int _nrad, int _mdis, bool _hp, 
-		bool _ucubic, bool _cost3, int _vcheck, float _vthresh0, float _vthresh1, 
+	eedi3(PClip _child, int _field, bool _dh, bool _Y, bool _U, bool _V,
+		float _alpha, float _beta, float _gamma, int _nrad, int _mdis, bool _hp,
+		bool _ucubic, bool _cost3, int _vcheck, float _vthresh0, float _vthresh1,
 		float _vthresh2, PClip _sclip, int _threads, PClip _mclip, int opt,
 		IScriptEnvironment *env);
-	eedi3::~eedi3();
-	PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env);
+	~eedi3();
+	PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment *env);
 };
