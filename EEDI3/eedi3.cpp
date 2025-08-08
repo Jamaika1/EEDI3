@@ -1104,7 +1104,7 @@ AVSValue __cdecl Create_eedi3_rpow2(AVSValue args, void* user_data, IScriptEnvir
   bool hp = args[7].AsBool(false);
   bool ucubic = args[8].AsBool(true);
   bool cost3 = args[9].AsBool(true);
-  int vcheck = args[10].AsInt(2);
+  int vcheck = args[10].AsInt(0);
   float vthresh0 = float(args[11].AsFloat(32.0f));
   float vthresh1 = float(args[12].AsFloat(64.0f));
   float vthresh2 = float(args[13].AsFloat(4.0f));
