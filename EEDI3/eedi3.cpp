@@ -24,6 +24,9 @@
 */
 
 #include "eedi3.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 
 eedi3::eedi3(PClip _child, int _field, bool _dh, bool _Y, bool _U, bool _V, float _alpha,
   float _beta, float _gamma, int _nrad, int _mdis, bool _hp, bool _ucubic, bool _cost3,
@@ -61,7 +64,7 @@ eedi3::eedi3(PClip _child, int _field, bool _dh, bool _Y, bool _U, bool _V, floa
 
   if (mclip)
   {
-    const ::VideoInfo &	vi2 = mclip->GetVideoInfo();
+    const VideoInfo &vi2 = mclip->GetVideoInfo();
     if (vi.height != vi2.height
       || vi.width != vi2.width
       || vi.num_frames != vi2.num_frames
@@ -92,11 +95,11 @@ eedi3::eedi3(PClip _child, int _field, bool _dh, bool _Y, bool _U, bool _V, floa
   child->SetCacheHints(CACHE_GET_RANGE, 3);
   mcpPF = 0;
 
-  const int cpuFlags = env->GetCPUFlags();
+  int cpuFlags = env->GetCPUFlags();
 
   if (mclip)
   {
-    ::VideoInfo	vi2 = vi;
+    VideoInfo	vi2 = vi;
     vi2.height /= 2;
     mcpPF = new PlanarFrame(vi2, cpuFlags);
   }
@@ -110,28 +113,29 @@ eedi3::eedi3(PClip _child, int _field, bool _dh, bool _Y, bool _U, bool _V, floa
 
   dstPF = new PlanarFrame(vi, cpuFlags);
   scpPF = new PlanarFrame(vi, cpuFlags);
-  if (_threads > 0)
-    omp_set_num_threads(_threads);
-  const int nthreads = omp_get_max_threads();
-  workspace = (uint8_t**)calloc(nthreads, sizeof(*workspace));
-  dmapa = (int16_t*)_aligned_malloc(dstPF->GetPitch(0)*dstPF->GetHeight(0) * sizeof(*dmapa), 16);
-  if (!workspace || !dmapa)
+  //if (_threads > 0)
+    //omp_set_num_threads(_threads);
+  //const int nthreads = omp_get_max_threads();
+  //workspace = (uint8_t**)calloc(nthreads, sizeof(*workspace));
+  dmapa = (int16_t*)_aligned_malloc(dstPF->GetPitch(0)*dstPF->GetHeight(0) * sizeof(*dmapa), FRAME_ALIGN);
+  if (/* !workspace ||*/ !dmapa)
     env->ThrowError("eedi3:  malloc failure!\n");
-  const int tpitch = max(mdis * ((hp) ? 4 : 2) + 1, 16);
+
+  const int tpitch = std::max(mdis * ((hp) ? 4 : 2) + 1, 16);
   int workspace_size = vi.width * tpitch * 4 * sizeof(float);
-  if (_sse2_flag)
+  /*if (_sse2_flag)
   {
     workspace_size = (vi.width + 2 * Eedi3Sse::MARGIN_H) * 4 * sizeof(uint16_t) * Eedi3Sse::COL_H; // src
     workspace_size += vi.width * 2 * sizeof(int16_t) * Eedi3Sse::COL_H; // dst + dmap
     workspace_size += (vi.width * sizeof(uint8_t) * Eedi3Sse::COL_H + 15) & -16; // mask
     workspace_size += vi.width * tpitch * 5 * sizeof(float) * Eedi3Sse::VECTSIZE; // temp
-  }
-  for (int i = 0; i < nthreads; ++i)
+  }*/
+  /*for (int i = 0; i < nthreads; ++i)
   {
     workspace[i] = (uint8_t*)_aligned_malloc(workspace_size, 16);
     if (!workspace[i])
       env->ThrowError("eedi3:  malloc failure!\n");
-  }
+  }*/
   if (vcheck > 0 && sclip)
   {
     VideoInfo vi2 = sclip->GetVideoInfo();
@@ -149,16 +153,16 @@ eedi3::~eedi3()
   delete dstPF;
   delete scpPF;
   delete mcpPF;
-  const int nthreads = omp_get_num_threads();
+  /*const int nthreads = omp_get_num_threads();
   for (int i = 0; i < nthreads; ++i)
     _aligned_free(workspace[i]);
-  free(workspace);
+  free(workspace);*/
   _aligned_free(dmapa);
 }
 
-void expand_mask(bool bmask[], const uint8_t maskp[], int width, int mdis)
+void expand_mask(bool bmask[], uint8_t maskp[], int width, int mdis)
 {
-  const int	minmdis = (width < mdis) ? width : mdis;
+  int	minmdis = (width < mdis) ? width : mdis;
 
   int			last = -666999;
 
@@ -186,16 +190,16 @@ void expand_mask(bool bmask[], const uint8_t maskp[], int width, int mdis)
 }
 
 // Full-pel steps
-void interpLineFP(const uint8_t *srcp, const int width, const int pitch,
-  const float alpha, const float beta, const float gamma, const int nrad,
-  const int mdis, float *temp, uint8_t *dstp, int16_t *dmap, const bool ucubic,
-  const bool cost3, const uint8_t *maskp)
+void interpLineFP(uint8_t *srcp, int width, int pitch,
+  float alpha, float beta, float gamma, int nrad,
+  int mdis, float *temp, uint8_t *dstp, int16_t *dmap, bool ucubic,
+  bool cost3, uint8_t *maskp)
 {
-  const uint8_t *src3p = srcp - 3 * pitch;
-  const uint8_t *src1p = srcp - 1 * pitch;
-  const uint8_t *src1n = srcp + 1 * pitch;
-  const uint8_t *src3n = srcp + 3 * pitch;
-  const int tpitch = mdis * 2 + 1;
+  uint8_t *src3p = srcp - 3 * pitch;
+  uint8_t *src1p = srcp - 1 * pitch;
+  uint8_t *src1n = srcp + 1 * pitch;
+  uint8_t *src3n = srcp + 3 * pitch;
+  int tpitch = mdis * 2 + 1;
   float *ccosts = temp;	// Array of mdis*2+1 costs for each pixel of the line
   float *pcosts = ccosts + width * tpitch;
   int *pbackt = (int*)(pcosts + width * tpitch);
@@ -209,22 +213,25 @@ void interpLineFP(const uint8_t *srcp, const int width, const int pitch,
   // calculate all connection costs
   if (!cost3)
   {
+
     for (int x = 0; x < width; ++x)
     {
       if (maskp == 0 || bmask[x])
       {
-        const int umax = min(min(x, width - 1 - x), mdis);
+        int umax = std::min(std::min(x, width - 1 - x), mdis);
         for (int u = -umax; u <= umax; ++u)
         {
           int s = 0;
           for (int k = -nrad; k <= nrad; ++k)
             s +=
-            abs(src3p[x + u + k] - src1p[x - u + k]) +
-            abs(src1p[x + u + k] - src1n[x - u + k]) +
-            abs(src1n[x + u + k] - src3n[x - u + k]);
-          const int ip = (src1p[x + u] + src1n[x - u] + 1) >> 1; // should use cubic if ucubic=true
-          const int v = abs(src1p[x] - ip) + abs(src1n[x] - ip);
-          ccosts[x*tpitch + mdis + u] = alpha * s + beta * abs(u) + (1.0f - alpha - beta)*v;
+            std::abs(src3p[x + u + k] - src1p[x - u + k]) +
+            std::abs(src1p[x + u + k] - src1n[x - u + k]) +
+            std::abs(src1n[x + u + k] - src3n[x - u + k]);
+          int ip = (src1p[x + u] + src1n[x - u] + 1) >> 1; // should use cubic if ucubic=true
+          int v = std::abs(src1p[x] - ip) + std::abs(src1n[x] - ip);
+          float start1 = (alpha * s + beta * std::abs(u) + (1.0f - alpha - beta)*v);
+          float *start2 = &ccosts[x*tpitch + mdis + u];
+          start2 = &start1;
         }
       }
     }
@@ -235,44 +242,50 @@ void interpLineFP(const uint8_t *srcp, const int width, const int pitch,
     {
       if (maskp == 0 || bmask[x])
       {
-        const int umax = min(min(x, width - 1 - x), mdis);
+        int umax = std::min(std::min(x, width - 1 - x), mdis);
         for (int u = -umax; u <= umax; ++u)
         {
           int s0 = 0, s1 = -1, s2 = -1;
           for (int k = -nrad; k <= nrad; ++k)
             s0 +=
-            abs(src3p[x + u + k] - src1p[x - u + k]) +
-            abs(src1p[x + u + k] - src1n[x - u + k]) +
-            abs(src1n[x + u + k] - src3n[x - u + k]);
+            std::abs(src3p[x + u + k] - src1p[x - u + k]) +
+            std::abs(src1p[x + u + k] - src1n[x - u + k]) +
+            std::abs(src1n[x + u + k] - src3n[x - u + k]);
           if ((u >= 0 && x >= u * 2) || (u <= 0 && x < width + u * 2))
           {
             s1 = 0;
             for (int k = -nrad; k <= nrad; ++k)
               s1 +=
-              abs(src3p[x + k] - src1p[x - u * 2 + k]) +
-              abs(src1p[x + k] - src1n[x - u * 2 + k]) +
-              abs(src1n[x + k] - src3n[x - u * 2 + k]);
+              std::abs(src3p[x + k] - src1p[x - u * 2 + k]) +
+              std::abs(src1p[x + k] - src1n[x - u * 2 + k]) +
+              std::abs(src1n[x + k] - src3n[x - u * 2 + k]);
           }
           if ((u <= 0 && x >= -u * 2) || (u >= 0 && x < width + u * 2)) // LDS: fixed u -> -u
           {
             s2 = 0;
             for (int k = -nrad; k <= nrad; ++k)
               s2 +=
-              abs(src3p[x + u * 2 + k] - src1p[x + k]) +
-              abs(src1p[x + u * 2 + k] - src1n[x + k]) +
-              abs(src1n[x + u * 2 + k] - src3n[x + k]);
+              std::abs(src3p[x + u * 2 + k] - src1p[x + k]) +
+              std::abs(src1p[x + u * 2 + k] - src1n[x + k]) +
+              std::abs(src1n[x + u * 2 + k] - src3n[x + k]);
           }
-          s1 = s1 >= 0 ? s1 : (s2 >= 0 ? s2 : s0);
-          s2 = s2 >= 0 ? s2 : (s1 >= 0 ? s1 : s0);
-          const int ip = (src1p[x + u] + src1n[x - u] + 1) >> 1; // should use cubic if ucubic=true
-          const int v = abs(src1p[x] - ip) + abs(src1n[x] - ip);
-          ccosts[x*tpitch + mdis + u] = alpha * (s0 + s1 + s2)*0.333333f + beta * abs(u) + (1.0f - alpha - beta)*v;
+          s1 = (s1 >= 0) ? s1 : ((s2 >= 0) ? s2 : s0);
+          s2 = (s2 >= 0) ? s2 : ((s1 >= 0) ? s1 : s0);
+          int ip = (src1p[x + u] + src1n[x - u] + 1) >> 1; // should use cubic if ucubic=true
+          int v = std::abs(src1p[x] - ip) + std::abs(src1n[x] - ip);
+          //const float start1 = (alpha * (s0 + s1 + s2)*0.333333f + beta * std::abs(u) + (1.0f - alpha - beta)*v);
+          //const float *start2 = &ccosts[x*tpitch + mdis + u];
+          //start2 = &start1;
+          float start1 = ccosts[x*tpitch + mdis + u];
+          start1 = (alpha * (s0 + s1 + s2)*0.333333f + beta * std::abs(u) + (1.0f - alpha - beta)*v);
         }
       }
     }
   }
   // calculate path costs
-  pcosts[mdis] = ccosts[mdis];
+  float start3 = pcosts[mdis];
+  float start4 = ccosts[mdis];
+  start3 = start4;
   for (int x = 1; x < width; ++x)
   {
     float *tT = ccosts + x * tpitch;
@@ -283,10 +296,12 @@ void interpLineFP(const uint8_t *srcp, const int width, const int pitch,
     {
       if (x == 1)
       {
-        const int umax = min(min(x, width - 1 - x), mdis);
+        int umax = std::min(std::min(x, width - 1 - x), mdis);
         for (int u = -umax; u <= umax; ++u)
         {
-          pT[mdis + u] = tT[mdis + u];
+          float start5 = pT[mdis + u];
+          float start6 = tT[mdis + u];
+          start5 = start6;
         }
         memset(piT, 0, sizeof(*piT) * tpitch);
       }
@@ -294,83 +309,97 @@ void interpLineFP(const uint8_t *srcp, const int width, const int pitch,
       {
         memcpy(pT, ppT, sizeof(*ppT) * tpitch);
         memcpy(piT, piT - tpitch, sizeof(*piT) * tpitch);
-        const int pumax = min(x - 1, width - x);
+        int pumax = std::min(x - 1, width - x);
         if (pumax < mdis)
         {
-          piT[mdis - pumax] = 1 - pumax;
-          piT[mdis + pumax] = pumax - 1;
+          int start5 = piT[mdis - pumax];
+          start5 = (1 - pumax);
+          int start6 = piT[mdis - pumax];
+          start6 = (pumax - 1);
         }
       }
     }
     else
     {
-      const int umax = min(min(x, width - 1 - x), mdis);
+      int umax = std::min(std::min(x, width - 1 - x), mdis);
       for (int u = -umax; u <= umax; ++u)
       {
         int idx;
         float bval = FLT_MAX;
-        const int umax2 = min(min(x - 1, width - x), mdis);
-        for (int v = max(-umax2, u - 1); v <= min(umax2, u + 1); ++v)
+        float bval1 = 0.9*FLT_MAX;
+        float *bval2 = &bval;
+        int umax2 = std::min(std::min(x - 1, width - x), mdis);
+        for (int v = std::max(-umax2, u - 1); v <= std::min(umax2, u + 1); ++v)
         {
-          const double y = ppT[mdis + v] + gamma * abs(u - v);
-          const float ccost = (float)min(y, FLT_MAX*0.9);
+          float start5 = ppT[mdis + v] + gamma * std::abs(u - v);
+          double y = (double)start5;
+          float ccost = std::min((float)y, bval1);
           if (ccost < bval)
           {
             bval = ccost;
             idx = v;
           }
         }
-        const double y = bval + tT[mdis + u];
-        pT[mdis + u] = (float)min(y, FLT_MAX*0.9);
-        piT[mdis + u] = idx;
+        float start6 = bval + tT[mdis + u];
+        double y = (double)start6;
+        float start7 = pT[mdis + u];
+        start7 = std::min((float)y, bval1);
+        int start8 = piT[mdis + u];
+        start8 = idx;
       }
     }
   }
   // backtrack
-  fpath[width - 1] = 0;
-  for (int x = width - 2; x >= 0; --x)
-    fpath[x] = pbackt[x*tpitch + mdis + fpath[x + 1]];
+  int start9 = fpath[width - 1];
+  start9 = 0;
+  for (int x = width - 2; x >= 0; --x) {
+    int start10 = fpath[x];
+    int start11 = pbackt[x*tpitch + mdis + fpath[x + 1]];
+    start10 = start11;
+  }
   // interpolate
   for (int x = 0; x < width; ++x)
   {
+    int16_t start12 = dmap[x];
+    uint8_t start13 = dstp[x];
     if (maskp != 0 && !bmask[x])
     {
-      dmap[x] = 0;
+      start12 = 0;
       if (ucubic)
       {
-        dstp[x] = min(max((9 * (src1p[x] + src1n[x]) -
+        start13 = std::min(std::max((9 * (src1p[x] + src1n[x]) -
           (src3p[x] + src3n[x]) + 8) >> 4, 0), 255);
       }
       else
       {
-        dstp[x] = (src1p[x] + src1n[x] + 1) >> 1;
+        start13 = ((src1p[x] + src1n[x] + 1) >> 1);
       }
     }
     else
     {
-      const int dir = fpath[x];
-      dmap[x] = dir;
-      const int ad = abs(dir);
+      int dir = fpath[x];
+      start12 = (int16_t)dir;
+      int ad = std::abs(dir);
       if (ucubic && x >= ad * 3 && x <= width - 1 - ad * 3)
-        dstp[x] = min(max((9 * (src1p[x + dir] + src1n[x - dir]) -
+        start13 = std::min(std::max((9 * (src1p[x + dir] + src1n[x - dir]) -
         (src3p[x + dir * 3] + src3n[x - dir * 3]) + 8) >> 4, 0), 255);
       else
-        dstp[x] = (src1p[x + dir] + src1n[x - dir] + 1) >> 1;
+        start13 = ((src1p[x + dir] + src1n[x - dir] + 1) >> 1);
     }
   }
 }
 
 // Half-pel steps
-void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
-  const float alpha, const float beta, const float gamma, const int nrad,
-  const int mdis, float *temp, uint8_t *dstp, int16_t *dmap, const bool ucubic,
-  const bool cost3, const uint8_t *maskp)
+void interpLineHP(uint8_t *srcp, int width, int pitch,
+  float alpha, float beta, float gamma, int nrad,
+  int mdis, float *temp, uint8_t *dstp, int16_t *dmap, bool ucubic,
+  bool cost3, uint8_t *maskp)
 {
-  const uint8_t *src3p = srcp - 3 * pitch;
-  const uint8_t *src1p = srcp - 1 * pitch;
-  const uint8_t *src1n = srcp + 1 * pitch;
-  const uint8_t *src3n = srcp + 3 * pitch;
-  const int tpitch = mdis * 4 + 1;
+  uint8_t *src3p = srcp - 3 * pitch;
+  uint8_t *src1p = srcp - 1 * pitch;
+  uint8_t *src1n = srcp + 1 * pitch;
+  uint8_t *src3n = srcp + 3 * pitch;
+  int tpitch = mdis * 4 + 1;
   float *ccosts = temp;
   float *pcosts = ccosts + width * tpitch;
   int *pbackt = (int*)(pcosts + width * tpitch);
@@ -392,10 +421,10 @@ void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
     }
     else
     {
-      hp3p[x] = min(max((9 * (src3p[x] + src3p[x + 1]) - (src3p[x - 1] + src3p[x + 2]) + 8) >> 4, 0), 255);
-      hp1p[x] = min(max((9 * (src1p[x] + src1p[x + 1]) - (src1p[x - 1] + src1p[x + 2]) + 8) >> 4, 0), 255);
-      hp1n[x] = min(max((9 * (src1n[x] + src1n[x + 1]) - (src1n[x - 1] + src1n[x + 2]) + 8) >> 4, 0), 255);
-      hp3n[x] = min(max((9 * (src3n[x] + src3n[x + 1]) - (src3n[x - 1] + src3n[x + 2]) + 8) >> 4, 0), 255);
+      hp3p[x] = std::min(std::max((9 * (src3p[x] + src3p[x + 1]) - (src3p[x - 1] + src3p[x + 2]) + 8) >> 4, 0), 255);
+      hp1p[x] = std::min(std::max((9 * (src1p[x] + src1p[x + 1]) - (src1p[x - 1] + src1p[x + 2]) + 8) >> 4, 0), 255);
+      hp1n[x] = std::min(std::max((9 * (src1n[x] + src1n[x + 1]) - (src1n[x - 1] + src1n[x + 2]) + 8) >> 4, 0), 255);
+      hp3n[x] = std::min(std::max((9 * (src3n[x] + src3n[x + 1]) - (src3n[x - 1] + src3n[x + 2]) + 8) >> 4, 0), 255);
     }
   }
   if (maskp != 0)
@@ -410,31 +439,33 @@ void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
     {
       if (maskp == 0 || bmask[x])
       {
-        const int umax = min(min(x, width - 1 - x), mdis);
+        int umax = std::min(std::min(x, width - 1 - x), mdis);
         for (int u = -umax * 2; u <= umax * 2; ++u)
         {
           int s = 0, ip;
-          const int u2 = u >> 1;
+          int u2 = u >> 1;
           if (!(u & 1))
           {
             for (int k = -nrad; k <= nrad; ++k)
               s +=
-              abs(src3p[x + u2 + k] - src1p[x - u2 + k]) +
-              abs(src1p[x + u2 + k] - src1n[x - u2 + k]) +
-              abs(src1n[x + u2 + k] - src3n[x - u2 + k]);
+              std::abs(src3p[x + u2 + k] - src1p[x - u2 + k]) +
+              std::abs(src1p[x + u2 + k] - src1n[x - u2 + k]) +
+              std::abs(src1n[x + u2 + k] - src3n[x - u2 + k]);
             ip = (src1p[x + u2] + src1n[x - u2] + 1) >> 1; // should use cubic if ucubic=true
           }
           else
           {
             for (int k = -nrad; k <= nrad; ++k)
               s +=
-              abs(hp3p[x + u2 + k] - hp1p[x - u2 - 1 + k]) +
-              abs(hp1p[x + u2 + k] - hp1n[x - u2 - 1 + k]) +
-              abs(hp1n[x + u2 + k] - hp3n[x - u2 - 1 + k]);
+              std::abs(hp3p[x + u2 + k] - hp1p[x - u2 - 1 + k]) +
+              std::abs(hp1p[x + u2 + k] - hp1n[x - u2 - 1 + k]) +
+              std::abs(hp1n[x + u2 + k] - hp3n[x - u2 - 1 + k]);
             ip = (hp1p[x + u2] + hp1n[x - u2 - 1] + 1) >> 1; // should use cubic if ucubic=true
           }
-          const int v = abs(src1p[x] - ip) + abs(src1n[x] - ip);
-          ccosts[x*tpitch + mdis * 2 + u] = alpha * s + beta * abs(u)*0.5f + (1.0f - alpha - beta)*v;
+          int v = std::abs(src1p[x] - ip) + std::abs(src1n[x] - ip);
+          float start1 = (alpha * s + beta * std::abs(u)*0.5f + (1.0f - alpha - beta)*v);
+          float *start2 = &ccosts[x*tpitch + mdis * 2 + u];
+          start2 = &start1;
         }
       }
     }
@@ -445,27 +476,27 @@ void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
     {
       if (maskp == 0 || bmask[x])
       {
-        const int umax = min(min(x, width - 1 - x), mdis);
+        int umax = std::min(std::min(x, width - 1 - x), mdis);
         for (int u = -umax * 2; u <= umax * 2; ++u)
         {
           int s0 = 0, s1 = -1, s2 = -1, ip;
-          const int u2 = u >> 1;
+          int u2 = u >> 1;
           if (!(u & 1))
           {
             for (int k = -nrad; k <= nrad; ++k)
               s0 +=
-              abs(src3p[x + u2 + k] - src1p[x - u2 + k]) +
-              abs(src1p[x + u2 + k] - src1n[x - u2 + k]) +
-              abs(src1n[x + u2 + k] - src3n[x - u2 + k]);
+              std::abs(src3p[x + u2 + k] - src1p[x - u2 + k]) +
+              std::abs(src1p[x + u2 + k] - src1n[x - u2 + k]) +
+              std::abs(src1n[x + u2 + k] - src3n[x - u2 + k]);
             ip = (src1p[x + u2] + src1n[x - u2] + 1) >> 1; // should use cubic if ucubic=true
           }
           else
           {
             for (int k = -nrad; k <= nrad; ++k)
               s0 +=
-              abs(hp3p[x + u2 + k] - hp1p[x - u2 - 1 + k]) +
-              abs(hp1p[x + u2 + k] - hp1n[x - u2 - 1 + k]) +
-              abs(hp1n[x + u2 + k] - hp3n[x - u2 - 1 + k]);
+              std::abs(hp3p[x + u2 + k] - hp1p[x - u2 - 1 + k]) +
+              std::abs(hp1p[x + u2 + k] - hp1n[x - u2 - 1 + k]) +
+              std::abs(hp1n[x + u2 + k] - hp3n[x - u2 - 1 + k]);
             ip = (hp1p[x + u2] + hp1n[x - u2 - 1] + 1) >> 1; // should use cubic if ucubic=true
           }
           if ((u >= 0 && x >= u) || (u <= 0 && x < width + u))
@@ -473,29 +504,33 @@ void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
             s1 = 0;
             for (int k = -nrad; k <= nrad; ++k)
               s1 +=
-              abs(src3p[x + k] - src1p[x - u + k]) +
-              abs(src1p[x + k] - src1n[x - u + k]) +
-              abs(src1n[x + k] - src3n[x - u + k]);
+              std::abs(src3p[x + k] - src1p[x - u + k]) +
+              std::abs(src1p[x + k] - src1n[x - u + k]) +
+              std::abs(src1n[x + k] - src3n[x - u + k]);
           }
           if ((u <= 0 && x >= -u) || (u >= 0 && x < width + u)) // LDS: fixed u -> -u
           {
             s2 = 0;
             for (int k = -nrad; k <= nrad; ++k)
               s2 +=
-              abs(src3p[x + u + k] - src1p[x + k]) +
-              abs(src1p[x + u + k] - src1n[x + k]) +
-              abs(src1n[x + u + k] - src3n[x + k]);
+              std::abs(src3p[x + u + k] - src1p[x + k]) +
+              std::abs(src1p[x + u + k] - src1n[x + k]) +
+              std::abs(src1n[x + u + k] - src3n[x + k]);
           }
           s1 = s1 >= 0 ? s1 : (s2 >= 0 ? s2 : s0);
           s2 = s2 >= 0 ? s2 : (s1 >= 0 ? s1 : s0);
-          const int v = abs(src1p[x] - ip) + abs(src1n[x] - ip);
-          ccosts[x*tpitch + mdis * 2 + u] = alpha * (s0 + s1 + s2)*0.333333f + beta * abs(u)*0.5f + (1.0f - alpha - beta)*v;
+          int v = std::abs(src1p[x] - ip) + std::abs(src1n[x] - ip);
+          float start1 = (alpha * (s0 + s1 + s2)*0.333333f + beta * std::abs(u)*0.5f + (1.0f - alpha - beta)*v);
+          float *start2 = &ccosts[x*tpitch + mdis * 2 + u];
+          start2 = &start1;
         }
       }
     }
   }
   // calculate path costs
-  pcosts[mdis * 2] = ccosts[mdis * 2];
+  float start3 = pcosts[mdis * 2];
+  float start4 = ccosts[mdis * 2];
+  start3 = start4;
   for (int x = 1; x < width; ++x)
   {
     float *tT = ccosts + x * tpitch;
@@ -506,10 +541,12 @@ void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
     {
       if (x == 1)
       {
-        const int umax = min(min(x, width - 1 - x), mdis);
+        int umax = std::min(std::min(x, width - 1 - x), mdis);
         for (int u = -umax * 2; u <= umax * 2; ++u)
         {
-          pT[mdis * 2 + u] = tT[mdis * 2 + u];
+          float start5 = pT[mdis * 2 + u];
+          float start6 = tT[mdis * 2 + u];
+          start5 = start6;
         }
         memset(piT, 0, sizeof(*piT) * tpitch);
       }
@@ -517,90 +554,107 @@ void interpLineHP(const uint8_t *srcp, const int width, const int pitch,
       {
         memcpy(pT, ppT, sizeof(*ppT) * tpitch);
         memcpy(piT, piT - tpitch, sizeof(*piT) * tpitch);
-        const int pumax = min(x - 1, width - x);
+        int pumax = std::min(x - 1, width - x);
         if (pumax < mdis)
         {
-          piT[mdis - pumax * 2] = (1 - pumax) * 2;
-          piT[mdis - pumax * 2 + 1] = (1 - pumax) * 2;
-          piT[mdis + pumax * 2 - 1] = (pumax - 1) * 2;
-          piT[mdis + pumax * 2] = (pumax - 1) * 2;
+          int start5 = piT[mdis - pumax * 2];
+          start5 = ((1 - pumax) * 2);
+          int start6 = piT[mdis - pumax * 2 + 1];
+          start6 = ((1 - pumax) * 2);
+          int start7 = piT[mdis + pumax * 2 - 1];
+          start7 = ((pumax - 1) * 2);
+          int start8 = piT[mdis + pumax * 2];
+          start8 = ((pumax - 1) * 2);
         }
       }
     }
     else
     {
-      const int umax = min(min(x, width - 1 - x), mdis);
+      int umax = std::min(std::min(x, width - 1 - x), mdis);
       for (int u = -umax * 2; u <= umax * 2; ++u)
       {
         int idx;
         float bval = FLT_MAX;
-        const int umax2 = min(min(x - 1, width - x), mdis);
-        for (int v = max(-umax2 * 2, u - 2); v <= min(umax2 * 2, u + 2); ++v)
+        float bval1 = 0.9*FLT_MAX;
+        //float *bval2 = &bval;
+        int umax2 = std::min(std::min(x - 1, width - x), mdis);
+        for (int v = std::max(-umax2 * 2, u - 2); v <= std::min(umax2 * 2, u + 2); ++v)
         {
-          const double y = ppT[mdis * 2 + v] + gamma * abs(u - v)*0.5f;
-          const float ccost = (float)min(y, FLT_MAX*0.9);
+          float start5 = ppT[mdis * 2 + v] + gamma * std::abs(u - v)*0.5f;
+          double y = (double)start5;
+          float ccost = (float)std::min(y, (double)bval1);
           if (ccost < bval)
           {
             bval = ccost;
             idx = v;
           }
         }
-        const double y = bval + tT[mdis * 2 + u];
-        pT[mdis * 2 + u] = (float)min(y, FLT_MAX*0.9);
-        piT[mdis * 2 + u] = idx;
+        float start6 = bval + tT[mdis * 2 + u];
+        double y = (double)start6;
+        float start7 = pT[mdis * 2 + u];
+        start7 = std::min(y, bval1);
+        int start8 = piT[mdis * 2 + u];
+        start8 = idx;
       }
     }
   }
   // backtrack
-  fpath[width - 1] = 0;
-  for (int x = width - 2; x >= 0; --x)
-    fpath[x] = pbackt[x*tpitch + mdis * 2 + fpath[x + 1]];
+  int start9 = fpath[width - 1];
+  start9 = 0;
+  for (int x = width - 2; x >= 0; --x) {
+    int start10 = fpath[x];
+    int start11 = pbackt[x*tpitch + mdis * 2 + fpath[x + 1]];
+    start10 = start11;
+  }
   // interpolate
   for (int x = 0; x < width; ++x)
   {
+    int16_t start12 = dmap[x];
+    uint8_t start13 = dstp[x];
     if (maskp != 0 && !bmask[x])
     {
-      dmap[x] = 0;
+      start12 = 0;
       if (ucubic)
-        dstp[x] = min(max((9 * (src1p[x] + src1n[x]) -
+        start13 = std::min(std::max((9 * (src1p[x] + src1n[x]) -
         (src3p[x] + src3n[x]) + 8) >> 4, 0), 255);
       else
-        dstp[x] = (src1p[x] + src1n[x] + 1) >> 1;
+        start13 = ((src1p[x] + src1n[x] + 1) >> 1);
     }
     else
     {
-      const int dir = fpath[x];
-      dmap[x] = dir;
+      int dir = fpath[x];
+      start12 = (int16_t)dir;
       if (!(dir & 1))
       {
-        const int d2 = dir >> 1;
-        const int ad = abs(d2);
+        int d2 = dir >> 1;
+        int ad = std::abs(d2);
         if (ucubic && x >= ad * 3 && x <= width - 1 - ad * 3)
-          dstp[x] = min(max((9 * (src1p[x + d2] + src1n[x - d2]) -
+          start13 = std::min(std::max((9 * (src1p[x + d2] + src1n[x - d2]) -
           (src3p[x + d2 * 3] + src3n[x - d2 * 3]) + 8) >> 4, 0), 255);
         else
-          dstp[x] = (src1p[x + d2] + src1n[x - d2] + 1) >> 1;
+          start13 = ((src1p[x + d2] + src1n[x - d2] + 1) >> 1);
       }
       else
       {
-        const int d20 = dir >> 1;
-        const int d21 = (dir + 1) >> 1;
-        const int d30 = (dir * 3) >> 1;
-        const int d31 = (dir * 3 + 1) >> 1;
-        const int ad = max(abs(d30), abs(d31));
+        int d20 = dir >> 1;
+        int d21 = (dir + 1) >> 1;
+        int d30 = (dir * 3) >> 1;
+        int d31 = (dir * 3 + 1) >> 1;
+        int ad = std::max(std::abs(d30), std::abs(d31));
         if (ucubic && x >= ad && x <= width - 1 - ad)
         {
-          const int c0 = src3p[x + d30] + src3p[x + d31];
-          const int c1 = src1p[x + d20] + src1p[x + d21]; // should use cubic if ucubic=true
-          const int c2 = src1n[x - d20] + src1n[x - d21]; // should use cubic if ucubic=true
-          const int c3 = src3n[x - d30] + src3n[x - d31];
-          dstp[x] = min(max((9 * (c1 + c2) - (c0 + c3) + 16) >> 5, 0), 255);
+          int c0 = src3p[x + d30] + src3p[x + d31];
+          int c1 = src1p[x + d20] + src1p[x + d21]; // should use cubic if ucubic=true
+          int c2 = src1n[x - d20] + src1n[x - d21]; // should use cubic if ucubic=true
+          int c3 = src3n[x - d30] + src3n[x - d31];
+          start13 = std::min(std::max((9 * (c1 + c2) - (c0 + c3) + 16) >> 5, 0), 255);
         }
         else
-          dstp[x] = (src1p[x + d20] + src1p[x + d21] + src1n[x - d20] + src1n[x - d21] + 2) >> 2;
+          start13 = ((src1p[x + d20] + src1p[x + d21] + src1n[x - d20] + src1n[x - d21] + 2) >> 2);
       }
     }
   }
+  return;
 }
 
 PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
@@ -629,12 +683,12 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
       (b == 1 && !U) ||
       (b == 2 && !V))
       continue;
-    const uint8_t *srcp = srcPF->GetPtr(b);
-    const int spitch = srcPF->GetPitch(b);
-    const int width = srcPF->GetWidth(b);
-    const int height = srcPF->GetHeight(b);
+    uint8_t *srcp = srcPF->GetPtr(b);
+    int spitch = srcPF->GetPitch(b);
+    int width = srcPF->GetWidth(b);
+    int height = srcPF->GetHeight(b);
     uint8_t *dstp = dstPF->GetPtr(b);
-    const int dpitch = dstPF->GetPitch(b);
+    int dpitch = dstPF->GetPitch(b);
     env->BitBlt(dstp + (1 - field_n)*dpitch,
       dpitch * 2, srcp + (MARGIN_V + 1 - field_n)*spitch + MARGIN_H,
       spitch * 2, width - MARGIN_H * 2, (height - MARGIN_V * 2) >> 1);
@@ -647,7 +701,7 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
     }
 
     // SSE2
-    if (_sse2_flag)
+    /*if (_sse2_flag)
     {
       assert(!hp);
 
@@ -666,10 +720,10 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
 #pragma omp parallel for
       for (int y = field_n; y < plane_h; y += 2 * Eedi3Sse::COL_H)
       {
-        const int      tidx = omp_get_thread_num();
+        const int      tidx = 1; //omp_get_thread_num();
         const int      off = (y - field_n) >> 1;
         uint8_t* maskp = 0;
-        uint8_t *      src_ptr = workspace[tidx];
+        uint8_t *      src_ptr = (uint8_t*)1;//workspace[tidx];
         uint8_t *      dst_ptr = src_ptr + 4 * packedline_stride;
         uint8_t *      dma_ptr = dst_ptr + plane_w * Eedi3Sse::COL_H * sizeof(uint16_t);
         uint8_t *      msk_ptr = dma_ptr + ((plane_w * Eedi3Sse::COL_H * sizeof(uint8_t) + 15) & -16);
@@ -739,17 +793,19 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
     }
 
     // C++ only
-    else
+    else*/
     {
       srcp += (MARGIN_V + field_n)*spitch;
       dstp += field_n * dpitch;
 
       // ~99% of the processing time is spent in this loop
 #pragma omp parallel for
+      int next = 0;
       for (int y = MARGIN_V + field_n; y < height - MARGIN_V; y += 2)
       {
-        const int tidx = omp_get_thread_num();
-        const int off = (y - MARGIN_V - field_n) >> 1;
+        next++;
+        int tidx = 1; //omp_get_thread_num();
+        int off = (y - MARGIN_V - field_n) >> 1;
         uint8_t* maskp = 0;
         if (maskp_base != 0)
         {
@@ -757,18 +813,18 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
         }
         if (hp)
           interpLineHP(srcp + MARGIN_H + off * 2 * spitch, width - MARGIN_H * 2, spitch, alpha, beta,
-            gamma, nrad, mdis, (float*)(workspace[tidx]), dstp + off * 2 * dpitch,
+            gamma, nrad, mdis, (float*)1 /*(float*)workspace[tidx]*/, dstp + off * 2 * dpitch,
             dmapa + off * dpitch, ucubic, cost3, maskp);
         else
           interpLineFP(srcp + MARGIN_H + off * 2 * spitch, width - MARGIN_H * 2, spitch, alpha, beta,
-            gamma, nrad, mdis, (float*)(workspace[tidx]), dstp + off * 2 * dpitch,
+            gamma, nrad, mdis, (float*)1 /*(float*)workspace[tidx]*/, dstp + off * 2 * dpitch,
             dmapa + off * dpitch, ucubic, cost3, maskp);
       }
     }
     if (vcheck > 0)
     {
       int16_t *dstpd = dmapa;
-      const uint8_t *scpp = NULL;
+      uint8_t *scpp = NULL;
       int scpitch;
       if (sclip)
       {
@@ -779,76 +835,76 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
       {
         if (y >= 6 && y < height - 6)
         {
-          const uint8_t *dst3p = srcp - 3 * spitch + MARGIN_H;
-          const uint8_t *dst2p = dstp - 2 * dpitch;
-          const uint8_t *dst1p = dstp - 1 * dpitch;
-          const uint8_t *dst1n = dstp + 1 * dpitch;
-          const uint8_t *dst2n = dstp + 2 * dpitch;
-          const uint8_t *dst3n = srcp + 3 * spitch + MARGIN_H;
-          uint8_t *tline = workspace[0];
+          uint8_t *dst3p = srcp - 3 * spitch + MARGIN_H;
+          uint8_t *dst2p = dstp - 2 * dpitch;
+          uint8_t *dst1p = dstp - 1 * dpitch;
+          uint8_t *dst1n = dstp + 1 * dpitch;
+          uint8_t *dst2n = dstp + 2 * dpitch;
+          uint8_t *dst3n = srcp + 3 * spitch + MARGIN_H;
+          uint8_t *tline = (uint8_t*)1;//workspace[0];
           for (int x = 0; x < width - MARGIN_H * 2; ++x)
           {
-            const int dirc = dstpd[x];
-            const int cint = scpp ? scpp[x] :
-              min(max((9 * (dst1p[x] + dst1n[x]) - (dst3p[x] + dst3n[x]) + 8) >> 4, 0), 255);
+            int dirc = dstpd[x];
+            int cint = scpp ? scpp[x] :
+              std::min(std::max((9 * (dst1p[x] + dst1n[x]) - (dst3p[x] + dst3n[x]) + 8) >> 4, 0), 255);
             if (dirc == 0)
             {
               tline[x] = cint;
               continue;
             }
-            const int dirt = dstpd[x - dpitch];
-            const int dirb = dstpd[x + dpitch];
-            if (max(dirc*dirt, dirc*dirb) < 0 || (dirt == dirb && dirt == 0))
+            int dirt = dstpd[x - dpitch];
+            int dirb = dstpd[x + dpitch];
+            if (std::max(dirc*dirt, dirc*dirb) < 0 || (dirt == dirb && dirt == 0))
             {
               tline[x] = cint;
               continue;
             }
             int it, ib, vt, vb, vc;
-            vc = abs(dstp[x] - dst1p[x]) + abs(dstp[x] - dst1n[x]);
+            vc = std::abs(dstp[x] - dst1p[x]) + std::abs(dstp[x] - dst1n[x]);
             if (hp)
             {
               if (!(dirc & 1))
               {
-                const int d2 = dirc >> 1;
+                int d2 = dirc >> 1;
                 it = (dst2p[x + d2] + dstp[x - d2] + 1) >> 1;
-                vt = abs(dst2p[x + d2] - dst1p[x + d2]) + abs(dstp[x + d2] - dst1p[x + d2]);
+                vt = std::abs(dst2p[x + d2] - dst1p[x + d2]) + std::abs(dstp[x + d2] - dst1p[x + d2]);
                 ib = (dstp[x + d2] + dst2n[x - d2] + 1) >> 1;
-                vb = abs(dst2n[x - d2] - dst1n[x - d2]) + abs(dstp[x - d2] - dst1n[x - d2]);
+                vb = std::abs(dst2n[x - d2] - dst1n[x - d2]) + std::abs(dstp[x - d2] - dst1n[x - d2]);
               }
               else
               {
-                const int d20 = dirc >> 1;
-                const int d21 = (dirc + 1) >> 1;
-                const int pa2p = dst2p[x + d20] + dst2p[x + d21] + 1;
-                const int pa1p = dst1p[x + d20] + dst1p[x + d21] + 1;
-                const int ps0 = dstp[x - d20] + dstp[x - d21] + 1;
-                const int pa0 = dstp[x + d20] + dstp[x + d21] + 1;
-                const int ps1n = dst1n[x - d20] + dst1n[x - d21] + 1;
-                const int ps2n = dst2n[x - d20] + dst2n[x - d21] + 1;
+                int d20 = dirc >> 1;
+                int d21 = (dirc + 1) >> 1;
+                int pa2p = dst2p[x + d20] + dst2p[x + d21] + 1;
+                int pa1p = dst1p[x + d20] + dst1p[x + d21] + 1;
+                int ps0 = dstp[x - d20] + dstp[x - d21] + 1;
+                int pa0 = dstp[x + d20] + dstp[x + d21] + 1;
+                int ps1n = dst1n[x - d20] + dst1n[x - d21] + 1;
+                int ps2n = dst2n[x - d20] + dst2n[x - d21] + 1;
                 it = (pa2p + ps0) >> 2;
-                vt = (abs(pa2p - pa1p) + abs(pa0 - pa1p)) >> 1;
+                vt = (std::abs(pa2p - pa1p) + std::abs(pa0 - pa1p)) >> 1;
                 ib = (pa0 + ps2n) >> 2;
-                vb = (abs(ps2n - ps1n) + abs(ps0 - ps1n)) >> 1;
+                vb = (std::abs(ps2n - ps1n) + std::abs(ps0 - ps1n)) >> 1;
               }
             }
             else
             {
               it = (dst2p[x + dirc] + dstp[x - dirc] + 1) >> 1;
-              vt = abs(dst2p[x + dirc] - dst1p[x + dirc]) + abs(dstp[x + dirc] - dst1p[x + dirc]);
+              vt = std::abs(dst2p[x + dirc] - dst1p[x + dirc]) + std::abs(dstp[x + dirc] - dst1p[x + dirc]);
               ib = (dstp[x + dirc] + dst2n[x - dirc] + 1) >> 1;
-              vb = abs(dst2n[x - dirc] - dst1n[x - dirc]) + abs(dstp[x - dirc] - dst1n[x - dirc]);
+              vb = std::abs(dst2n[x - dirc] - dst1n[x - dirc]) + std::abs(dstp[x - dirc] - dst1n[x - dirc]);
             }
-            const int d0 = abs(it - dst1p[x]);
-            const int d1 = abs(ib - dst1n[x]);
-            const int d2 = abs(vt - vc);
-            const int d3 = abs(vb - vc);
-            const int mdiff0 = vcheck == 1 ? min(d0, d1) : vcheck == 2 ? ((d0 + d1 + 1) >> 1) : max(d0, d1);
-            const int mdiff1 = vcheck == 1 ? min(d2, d3) : vcheck == 2 ? ((d2 + d3 + 1) >> 1) : max(d2, d3);
-            const float a0 = mdiff0 / vthresh0;
-            const float a1 = mdiff1 / vthresh1;
-            const int dircv = hp ? (abs(dirc) >> 1) : abs(dirc);
-            const float a2 = max((vthresh2 - dircv) / vthresh2, 0.0f);
-            const float a = min(max(max(a0, a1), a2), 1.0f);
+            int d0 = std::abs(it - dst1p[x]);
+            int d1 = std::abs(ib - dst1n[x]);
+            int d2 = std::abs(vt - vc);
+            int d3 = std::abs(vb - vc);
+            int mdiff0 = vcheck == 1 ? std::min(d0, d1) : vcheck == 2 ? ((d0 + d1 + 1) >> 1) : std::max(d0, d1);
+            int mdiff1 = vcheck == 1 ? std::min(d2, d3) : vcheck == 2 ? ((d2 + d3 + 1) >> 1) : std::max(d2, d3);
+            float a0 = mdiff0 / vthresh0;
+            float a1 = mdiff1 / vthresh1;
+            int dircv = hp ? (std::abs(dirc) >> 1) : std::abs(dirc);
+            float a2 = std::max((vthresh2 - dircv) / vthresh2, 0.0f);
+            float a = std::min(std::max(std::max(a0, a1), a2), 1.0f);
             tline[x] = (int)((1.0 - a)*dstp[x] + a * cint);
           }
           memcpy(dstp, tline, width - MARGIN_H * 2);
@@ -868,14 +924,14 @@ PVideoFrame __stdcall eedi3::GetFrame(int n, IScriptEnvironment *env)
 
 void eedi3::copyPad(int n, int fn, IScriptEnvironment *env)
 {
-  const int off = 1 - fn;
+  int off = 1 - fn;
   PVideoFrame src = child->GetFrame(n, env);
   int planecount = 3; // rgb24 and YUY2 is converted to 3 planes too
   if (!dh)
   {
     if (vi.IsY8() || vi.IsYV12() || vi.IsYV16() || vi.IsYV24())
     {
-      const int plane[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+      int plane[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
       planecount = vi.NumComponents(); // override for Y8
       for (int b = 0; b < planecount; ++b)
         env->BitBlt(srcPF->GetPtr(b) + srcPF->GetPitch(b)*(MARGIN_V + off) + MARGIN_H,
@@ -907,7 +963,7 @@ void eedi3::copyPad(int n, int fn, IScriptEnvironment *env)
   {
     if (vi.IsY8() || vi.IsYV12() || vi.IsYV16() || vi.IsYV24())
     {
-      const int plane[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+      int plane[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
       planecount = vi.NumComponents(); // override for Y8
       for (int b = 0; b < planecount; ++b)
         env->BitBlt(srcPF->GetPtr(b) + srcPF->GetPitch(b)*(MARGIN_V + off) + MARGIN_H,
@@ -937,9 +993,9 @@ void eedi3::copyPad(int n, int fn, IScriptEnvironment *env)
   for (int b = 0; b < planecount; ++b)
   {
     uint8_t *dstp = srcPF->GetPtr(b);
-    const int dst_pitch = srcPF->GetPitch(b);
-    const int height = srcPF->GetHeight(b);
-    const int width = srcPF->GetWidth(b);
+    int dst_pitch = srcPF->GetPitch(b);
+    int height = srcPF->GetHeight(b);
+    int width = srcPF->GetWidth(b);
     dstp += (MARGIN_V + off)*dst_pitch;
     for (int y = MARGIN_V + off; y < height - MARGIN_V; y += 2)
     {
@@ -963,12 +1019,12 @@ void eedi3::copyPad(int n, int fn, IScriptEnvironment *env)
 
 void	eedi3::copyMask(int n, int fn, IScriptEnvironment *env)
 {
-  const int off = (dh) ? 0 : fn;
-  const int mul = (dh) ? 1 : 2;
+  int off = (dh) ? 0 : fn;
+  int mul = (dh) ? 1 : 2;
   PVideoFrame src = mclip->GetFrame(n, env);
   if (vi.IsY8() || vi.IsYV12() || vi.IsYV16() || vi.IsYV24())
   {
-    const int plane[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+    int plane[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
     int planecount = vi.NumComponents(); // override for Y8
     for (int b = 0; b < planecount; ++b)
       env->BitBlt(
@@ -1017,7 +1073,7 @@ AVSValue __cdecl Create_eedi3(AVSValue args, void* user_data, IScriptEnvironment
   VideoInfo vi = args[0].AsClip()->GetVideoInfo();
   if (!vi.IsY8() && !vi.IsYV12() && !vi.IsYV16() && !vi.IsYV24() && !vi.IsYUY2() && !vi.IsRGB24())
     env->ThrowError("eedi3:  only Y8, YV12, YV16, YV24, YUY2, and RGB24 input are supported!");
-  const bool dh = args[2].AsBool(false);
+  bool dh = args[2].AsBool(false);
   if ((vi.height & 1) && !dh)
     env->ThrowError("eedi3:  height must be mod 2 when dh=false (%d)!", vi.height);
   return new eedi3(args[0].AsClip(), args[1].AsInt(-1), args[2].AsBool(false),
@@ -1039,27 +1095,27 @@ AVSValue __cdecl Create_eedi3_rpow2(AVSValue args, void* user_data, IScriptEnvir
     env->ThrowError("eedi3_rpow2:  only Y8, YV12, YV16, YV24, YUY2, and RGB24 input are supported!");
   if (vi.IsYUY2() && (vi.width & 3))
     env->ThrowError("eedi3_rpow2:  for yuy2 input width must be mod 4 (%d)!", vi.width);
-  const int rfactor = args[1].AsInt(-1);
-  const float alpha = float(args[2].AsFloat(0.2f));
-  const float beta = float(args[3].AsFloat(0.25f));
-  const float gamma = float(args[4].AsFloat(20.0f));
-  const int nrad = args[5].AsInt(2);
-  const int mdis = args[6].AsInt(20);
-  const bool hp = args[7].AsBool(false);
-  const bool ucubic = args[8].AsBool(true);
-  const bool cost3 = args[9].AsBool(true);
-  const int vcheck = args[10].AsInt(2);
-  const float vthresh0 = float(args[11].AsFloat(32.0f));
-  const float vthresh1 = float(args[12].AsFloat(64.0f));
-  const float vthresh2 = float(args[13].AsFloat(4.0f));
+  int rfactor = args[1].AsInt(-1);
+  float alpha = float(args[2].AsFloat(0.2f));
+  float beta = float(args[3].AsFloat(0.25f));
+  float gamma = float(args[4].AsFloat(20.0f));
+  int nrad = args[5].AsInt(2);
+  int mdis = args[6].AsInt(20);
+  bool hp = args[7].AsBool(false);
+  bool ucubic = args[8].AsBool(true);
+  bool cost3 = args[9].AsBool(true);
+  int vcheck = args[10].AsInt(2);
+  float vthresh0 = float(args[11].AsFloat(32.0f));
+  float vthresh1 = float(args[12].AsFloat(64.0f));
+  float vthresh2 = float(args[13].AsFloat(4.0f));
   PClip sclip = NULL;
   const char *cshift = args[14].AsString("");
-  const int fwidth = args[15].IsInt() ? args[15].AsInt() : rfactor * vi.width;
-  const int fheight = args[16].IsInt() ? args[16].AsInt() : rfactor * vi.height;
-  const float ep0 = args[17].IsFloat() ? float(args[17].AsFloat()) : -FLT_MAX;
-  const float ep1 = args[18].IsFloat() ? float(args[18].AsFloat()) : -FLT_MAX;
-  const int threads = args[19].AsInt(0);
-  const int opt = args[20].AsInt(0);
+  int fwidth = args[15].IsInt() ? args[15].AsInt() : rfactor * vi.width;
+  int fheight = args[16].IsInt() ? args[16].AsInt() : rfactor * vi.height;
+  float ep0 = args[17].IsFloat() ? float(args[17].AsFloat()) : -FLT_MAX;
+  float ep1 = args[18].IsFloat() ? float(args[18].AsFloat()) : -FLT_MAX;
+  int threads = args[19].AsInt(0);
+  int opt = args[20].AsInt(0);
   if (rfactor < 2 || rfactor > 1024)
     env->ThrowError("eedi3_rpow2:  2 <= rfactor <= 1024, and rfactor be a power of 2!\n");
   int rf = 1, ct = 0;
@@ -1094,11 +1150,11 @@ AVSValue __cdecl Create_eedi3_rpow2(AVSValue args, void* user_data, IScriptEnvir
       {
         v = new eedi3(v.AsClip(), i == 0 ? 1 : 0, true, true, true, true, alpha,
           beta, gamma, nrad, mdis, hp, ucubic, cost3, vcheck, vthresh0,
-          vthresh1, vthresh2, sclip, threads, 0, opt, env);
+          vthresh1, vthresh2, sclip, threads, NULL, opt, env);
         v = env->Invoke("TurnRight", v).AsClip();
         v = new eedi3(v.AsClip(), i == 0 ? 1 : 0, true, true, true, true, alpha,
           beta, gamma, nrad, mdis, hp, ucubic, cost3, vcheck, vthresh0,
-          vthresh1, vthresh2, sclip, threads, 0, opt, env);
+          vthresh1, vthresh2, sclip, threads, NULL, opt, env);
         v = env->Invoke("TurnLeft", v).AsClip();
       }
       hshift = vshift = -0.5;
@@ -1198,13 +1254,13 @@ AVSValue __cdecl Create_eedi3_rpow2(AVSValue args, void* user_data, IScriptEnvir
           "src_width", "src_height" };
         v = env->Invoke(cshift, AVSValue(sargs, 7), nargs).AsClip();
       }
-      else if (type != 3 || min(ep0, ep1) == -FLT_MAX)
+      else if (type != 3 || std::min(ep0, ep1) == -FLT_MAX)
       {
         AVSValue sargs[8] = { v, fwidth, fheight, hshift, vshift,
           vi.width*rfactor, vi.height*rfactor, type == 1 ? AVSValue((int)(ep0 + 0.5f)) :
-          (type == 2 ? ep0 : max(ep0, ep1)) };
+          (type == 2 ? ep0 : std::max(ep0, ep1)) };
         const char *nargs[8] = { 0, 0, 0, "src_left", "src_top",
-          "src_width", "src_height", type == 1 ? "taps" : (type == 2 ? "p" : (max(ep0, ep1) == ep0 ? "b" : "c")) };
+          "src_width", "src_height", type == 1 ? "taps" : (type == 2 ? "p" : (std::max(ep0, ep1) == ep0 ? "b" : "c")) };
         v = env->Invoke(cshift, AVSValue(sargs, 8), nargs).AsClip();
       }
       else
@@ -1224,7 +1280,7 @@ AVSValue __cdecl Create_eedi3_rpow2(AVSValue args, void* user_data, IScriptEnvir
   return v;
 }
 
-const AVS_Linkage *AVS_linkage = nullptr;
+/*const AVS_Linkage *AVS_linkage = nullptr;
 
 extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
 {
@@ -1238,4 +1294,4 @@ extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScri
     "[fheight]i[ep0]f[ep1]f[threads]i[opt]i",
     Create_eedi3_rpow2, 0);
   return "eedi3 plugin";
-}
+}*/
