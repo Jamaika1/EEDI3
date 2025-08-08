@@ -327,7 +327,6 @@ void interpLineFP(uint8_t *srcp, int width, int pitch,
         int idx;
         float bval = FLT_MAX;
         float bval1 = 0.9*FLT_MAX;
-        float *bval2 = &bval;
         int umax2 = std::min(std::min(x - 1, width - x), mdis);
         for (int v = std::max(-umax2, u - 1); v <= std::min(umax2, u + 1); ++v)
         {
@@ -576,13 +575,12 @@ void interpLineHP(uint8_t *srcp, int width, int pitch,
         int idx;
         float bval = FLT_MAX;
         float bval1 = 0.9*FLT_MAX;
-        //float *bval2 = &bval;
         int umax2 = std::min(std::min(x - 1, width - x), mdis);
         for (int v = std::max(-umax2 * 2, u - 2); v <= std::min(umax2 * 2, u + 2); ++v)
         {
           float start5 = ppT[mdis * 2 + v] + gamma * std::abs(u - v)*0.5f;
           double y = (double)start5;
-          float ccost = (float)std::min(y, (double)bval1);
+          float ccost = std::min((float)y, bval1);
           if (ccost < bval)
           {
             bval = ccost;
@@ -592,7 +590,7 @@ void interpLineHP(uint8_t *srcp, int width, int pitch,
         float start6 = bval + tT[mdis * 2 + u];
         double y = (double)start6;
         float start7 = pT[mdis * 2 + u];
-        start7 = std::min(y, bval1);
+        start7 = std::min((float)y, bval1);
         int start8 = piT[mdis * 2 + u];
         start8 = idx;
       }
